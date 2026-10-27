@@ -116,9 +116,9 @@ Key design decisions:
 
 ## 4. Incomplete features / not yet done
 
-- **Dedicated GitHub repo** `us-cabinet-world-timeclock` not yet created: the session's GitHub integration lacked
-  permission to create repos (HTTP 403). Code currently lives in `us-cabinet-world-timeclock/` on branch
-  `claude/kind-allen-cq9ahe` of `maggie141319/job-scout-agent`. See §12 step 1 to move it (history preserved).
+- ~~Dedicated GitHub repo~~ — **done 2026-10-27**: private repo `maggie141319/us-cabinet-world-timeclock`, branch `main`
+  (full history moved from the interim folder in `maggie141319/job-scout-agent`, branch `claude/kind-allen-cq9ahe`).
+  This repo is now the source of truth; the interim copy is frozen and can be deleted.
 - **No deployment yet** (needs the owner's Vercel + database accounts). See README §4.
 - **Warehouse coordinates unverified** (seeded approximation 35.4420, −97.6730; geocoding was unavailable). Must be
   verified on site before enforcement.
@@ -205,15 +205,8 @@ from a trusted machine. Health check: `/api/health`.
 
 ## 12. Exact next development steps
 
-1. **Create the dedicated private repo and move the code** (owner): on github.com create empty private repo
-   `us-cabinet-world-timeclock` (no README). Then, from a clone of `maggie141319/job-scout-agent`:
-   ```bash
-   git fetch origin claude/kind-allen-cq9ahe && git checkout claude/kind-allen-cq9ahe
-   git subtree split --prefix=us-cabinet-world-timeclock -b timeclock-main
-   git push git@github.com:<owner>/us-cabinet-world-timeclock.git timeclock-main:main
-   ```
-   (Or unzip the backup ZIP into a new folder, `git init`, commit, push.) Confirm CI passes there. Afterwards the
-   `us-cabinet-world-timeclock/` folder can be removed from job-scout-agent.
+1. ~~Create the dedicated private repo~~ (done: `maggie141319/us-cabinet-world-timeclock`, `main`). Check that the
+   GitHub Actions CI run on `main` is green. Optionally delete the frozen interim folder from `job-scout-agent`.
 2. Create Neon (or other Postgres) **staging** + **production** databases; set Vercel env vars; migrate; create admin.
 3. Deploy a **test (preview) deployment**; run README §5 checklist with 2–3 employees in **monitor** mode for a few days.
 4. Verify warehouse coordinates on site; tune radius/accuracy from real readings; enable enforcement.
@@ -229,7 +222,7 @@ from a trusted machine. Health check: `/api/health`.
 - Application code complete for v1; typecheck, 47 automated tests, production build and 15-step browser smoke test pass.
 - Update 2026-10-27: internal payment estimate switched to flat rate (all hours × hourly rate) per owner; hours over 40
   still reported; overtime multiplier configurable (migration 002).
-- Not deployed; dedicated repo pending (see §4/§12). Not approved for real employee use yet.
+- Code is in the dedicated private repo `maggie141319/us-cabinet-world-timeclock` (`main`). Not deployed yet. Not approved for real employee use yet.
 
 ## Continuing in Claude Code Desktop or ChatGPT
 
