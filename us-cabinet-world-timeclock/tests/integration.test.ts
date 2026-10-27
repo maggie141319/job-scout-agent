@@ -27,7 +27,7 @@ const { AppError } = await import("@/lib/errors");
 const SITE = { latitude: 35.442, longitude: -97.673 };
 const inside = { latitude: 35.4421, longitude: -97.6731, accuracy: 12, ageSeconds: 2 };
 const outside = { latitude: 35.47, longitude: -97.673, accuracy: 12, ageSeconds: 2 };
-const phone = { ip: "203.0.113.10", userAgent: "test-phone", kioskDeviceId: null };
+const phone: { ip: string; userAgent: string; kioskDeviceId: string | null } = { ip: "203.0.113.10", userAgent: "test-phone", kioskDeviceId: null };
 
 let adminActor: ReturnType<typeof actorFor>;
 let managerActor: ReturnType<typeof actorFor>;

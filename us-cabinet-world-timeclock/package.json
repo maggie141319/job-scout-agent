@@ -10,11 +10,12 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate": "node scripts/migrate.mjs",
     "admin:create": "node scripts/create-admin.mjs",
-    "backup:zip": "bash scripts/make-backup-zip.sh"
+    "backup:zip": "bash scripts/make-backup-zip.sh",
+    "backup:db": "bash scripts/backup-db.sh",
+    "test:e2e": "node tests/e2e/smoke.mjs"
   },
   "dependencies": {
     "next": "16.4.3",
