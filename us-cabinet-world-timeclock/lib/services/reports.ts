@@ -99,9 +99,10 @@ export interface SettlementRow extends EmployeeSettlement {
 export interface WeeklySettlement {
   week: { startDate: string; endDate: string; payDate: string; days: string[] };
   generatedAt: string;
-  overtimePolicy: SiteSettings["overtime_policy"];
+  payEstimateMethod: SiteSettings["pay_estimate_method"];
+  overtimeMultiplier: number;
   rows: SettlementRow[];
-  totals: { totalHours: number; overtimeHours: number; straightPayCents: number; overtimePremiumCents: number; amountDueCents: number };
+  totals: { totalHours: number; overtimeHours: number; straightPayCents: number; overtimePremiumCents: number; estimatedAmountCents: number };
 }
 
 /** Computes the live weekly settlement from raw punches (nothing is stored). */
@@ -131,7 +132,8 @@ export async function weeklySettlement(db: Queryable, weekDate: string, now = ne
       week,
       now,
       maxShiftHours: settings.max_shift_hours,
-      overtimePolicy: settings.overtime_policy,
+      payEstimateMethod: settings.pay_estimate_method,
+      overtimeMultiplier: settings.overtime_multiplier,
     });
     if (!e.active && calc.totalSeconds === 0 && calc.flags.length === 0) continue;
     const lastRate = empRates.filter((r) => r.effectiveDate <= week.endDate).at(-1);
@@ -149,14 +151,15 @@ export async function weeklySettlement(db: Queryable, weekDate: string, now = ne
   return {
     week: { startDate: week.startDate, endDate: week.endDate, payDate: week.payDate, days: week.days },
     generatedAt: now.toISOString(),
-    overtimePolicy: settings.overtime_policy,
+    payEstimateMethod: settings.pay_estimate_method,
+    overtimeMultiplier: settings.overtime_multiplier,
     rows,
     totals: {
       totalHours: Math.round(sum((r) => r.totalHours) * 100) / 100,
       overtimeHours: Math.round(sum((r) => r.overtimeHours) * 100) / 100,
       straightPayCents: sum((r) => r.straightPayCents),
       overtimePremiumCents: sum((r) => r.overtimePremiumCents),
-      amountDueCents: sum((r) => r.amountDueCents),
+      estimatedAmountCents: sum((r) => r.estimatedAmountCents),
     },
   };
 }
@@ -186,7 +189,8 @@ export async function employeeTimecard(db: Queryable, employeeId: string, weekDa
     week,
     now,
     maxShiftHours: settings.max_shift_hours,
-    overtimePolicy: settings.overtime_policy,
+    payEstimateMethod: settings.pay_estimate_method,
+    overtimeMultiplier: settings.overtime_multiplier,
   });
   const inWeek = res.rows.filter((p) => p.punched_at >= week.start && p.punched_at < week.end);
   return { week, punches: inWeek, settlement };
@@ -206,8 +210,8 @@ export async function finalizeWeek(db: Queryable, weekDate: string, note: string
 }
 
 export async function listSnapshots(db: Queryable, weekStart: string) {
-  const res = await db.query<{ id: string; finalized_at: Date; note: string | null; display_name: string | null; amount_due_cents: string }>(
-    `select s.id, s.finalized_at, s.note, a.display_name, (s.data->'totals'->>'amountDueCents') as amount_due_cents
+  const res = await db.query<{ id: string; finalized_at: Date; note: string | null; display_name: string | null; amount_cents: string }>(
+    `select s.id, s.finalized_at, s.note, a.display_name, coalesce(s.data->'totals'->>'estimatedAmountCents', s.data->'totals'->>'amountDueCents') as amount_cents
      from settlement_snapshots s left join admin_users a on a.id = s.finalized_by
      where s.week_start = $1 order by s.finalized_at desc`,
     [weekStart],

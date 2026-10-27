@@ -38,8 +38,13 @@ Confirmed requirements (from the owner's brief):
 Interpretations made (confirm with owner if different):
 - "Payment day: Friday" = the Friday immediately after the Thursday that ends the week (shown as Pay date).
 - PINs are exactly **6 digits** (4-digit PINs are too easy to guess and collide).
-- Overtime (>40 h in the Fri–Thu week) is **always reported**; whether the 0.5× premium is added to "Amount due"
-  is a setting (`apply` by default — the legally conservative choice; switch to `report_only` only on accountant advice).
+- **Payment estimate (owner instruction, 2026-10-27 update):** the internal estimate uses each worker's regular hourly
+  rate for **all** recorded hours, including hours over 40 (`pay_estimate_method = 'flat_rate'`, default). Hours over 40
+  in the Fri–Thu week are **always tracked and shown separately**. The overtime multiplier (`overtime_multiplier`,
+  default 1.5) stays configurable: its premium is always shown as a reference column and is added to the estimate only
+  if the method is switched to `overtime_premium`. Every screen/CSV labels the amount as an **internal payment estimate,
+  not a determination of legal payroll obligations**. The app does not assume 1099 classification removes overtime or
+  other legal requirements — confirm with the accountant.
 - Kiosk punches do not require GPS (the device itself is authorized and stays in the warehouse).
 
 ## 2. Technology stack and architecture
@@ -79,7 +84,10 @@ Key design decisions:
 - **Time attribution**: worked time is split at Chicago midnight (daily hours) and at Friday 00:00 (pay week), so
   overnight shifts land in the day/week they were actually worked. Durations use real instants (DST-correct).
 - **Rate history** (`employee_rates.effective_date`): each day uses the rate in effect that day; changing a rate never
-  rewrites past weeks. OT premium = 0.5 × (straight pay ÷ total hours) × OT hours (weighted regular rate).
+  rewrites past weeks. Estimated amount (flat rate) = Σ day hours × that day's rate. Reference OT premium =
+  (multiplier − 1) × (straight pay ÷ total hours) × hours over 40 (weighted regular rate); included only for `overtime_premium`.
+- Pay-estimate logic lives only in `lib/settlement.ts` (`calculateEmployeeWeek`, `PAY_ESTIMATE_DISCLAIMER`,
+  `payEstimateLabel`); pages and CSV exports read its output.
 - **Per-employee row lock** (`select … for update`) serializes punches; `client_request_id` (unique) makes retries idempotent.
 
 ## 3. Completed features
@@ -96,12 +104,14 @@ Key design decisions:
 - Roles: `admin` (everything) and `manager` (status, review, timecards/corrections; no rates, settlement, settings, audit, exports).
 - Employees: add/edit/deactivate/reactivate, generated or chosen PIN (shown once), PIN reset, rate history.
 - Status board, review queue (exceptions + irregular punches per week), timecards with raw history & corrections.
-- Weekly settlement: per-day hours, total, ≤40/>40 split, rate, straight pay, OT premium, amount due, flags; totals;
+- Weekly settlement: per-day hours, total, ≤40/>40 split, rate, hours × rate, reference OT premium at the configured
+  multiplier, **estimated amount (internal estimate, flat rate by default)**, flags; totals; disclaimer banner;
   snapshots; CSV exports: weekly summary, daily detail, QuickBooks-style time activities, raw punches.
 - Audit log page; per-employee change history.
 - Security headers (frame-deny, nosniff, HSTS, Permissions-Policy geolocation=self), same-origin check on punch APIs,
   Next server-action origin check, CSV formula-injection protection, generic error messages (no internals leaked).
-- Tests: 27 unit + 16 PostgreSQL integration tests; 15-step Playwright browser smoke test (all passing 2026-10-27).
+- Tests: 29 unit + 18 PostgreSQL integration tests (incl. flat-rate estimate, configurable multiplier, and an upgrade test
+  proving migration 002 leaves punches and audit history untouched); 15-step Playwright browser smoke test (all passing 2026-10-27).
 - CI workflow (`.github/workflows/ci.yml`): typecheck, tests with Postgres service, build (runs once in its own repo).
 
 ## 4. Incomplete features / not yet done
@@ -138,9 +148,17 @@ Tables (see `db/migrations/001_initial.sql`):
   geofence_result + mode, review_status none|pending|approved|rejected, exception reason, void fields, `replaces_punch_id`,
   correction reason, `client_request_id` (unique), ip/user agent. Triggers block deletes and edits of raw fields.
 - `audit_log` — append-only (trigger). `settlement_snapshots` — JSON reports. `kiosk_devices` (hashed token).
-- `site_settings` — single row: coordinates, radius, mode, verification, accuracy/age limits, duplicate window, max shift, OT policy.
+- `site_settings` — single row: coordinates, radius, mode, verification, accuracy/age limits, duplicate window, max shift,
+  `pay_estimate_method` (`flat_rate` | `overtime_premium`), `overtime_multiplier` (1.00–3.00).
   Constraint: `geofence_mode='enforce'` requires `coordinates_verified_at`.
 - `rate_limits` — failure counters.
+
+Migration history:
+- `001_initial.sql` — initial schema.
+- `002_flat_rate_estimate.sql` — renames `overtime_policy` → `pay_estimate_method`, sets it to `flat_rate`, adds
+  `overtime_multiplier` (1.5). Writes a `system` audit entry recording the old and new setting. Does not modify punches,
+  audit history or settlement snapshots (old snapshots keep their original `amountDueCents` field; the UI reads either).
+  **Run it on every existing database** (`npm run db:migrate`).
 
 Migrations: add a new file `db/migrations/NNN_description.sql` (never edit an applied one), then
 `DATABASE_URL=... npm run db:migrate` for each environment (staging first).
@@ -199,14 +217,18 @@ from a trusted machine. Health check: `/api/health`.
 2. Create Neon (or other Postgres) **staging** + **production** databases; set Vercel env vars; migrate; create admin.
 3. Deploy a **test (preview) deployment**; run README §5 checklist with 2–3 employees in **monitor** mode for a few days.
 4. Verify warehouse coordinates on site; tune radius/accuracy from real readings; enable enforcement.
-5. Confirm with the accountant: OT policy, worker classification, CSV/QuickBooks format, pay-date rule.
+5. Confirm with the accountant: whether the flat-rate estimate is appropriate (worker classification, overtime
+   obligations), CSV/QuickBooks format, pay-date rule. If overtime pay is required, set Settings → Payment estimate
+   method to "Add overtime premium" and the multiplier (no code change needed).
 6. Run one full Friday–Thursday test week in parallel with the current method; compare totals; then go live.
 7. Set up the weekly DB backup routine; test a restore.
 8. Optional later: email/SMS alert on new exceptions; employee weekly hours view (own data only); lock finalized weeks.
 
 ## Current status (2026-10-27)
 
-- Application code complete for v1; typecheck, 43 automated tests, production build and 15-step browser smoke test pass.
+- Application code complete for v1; typecheck, 47 automated tests, production build and 15-step browser smoke test pass.
+- Update 2026-10-27: internal payment estimate switched to flat rate (all hours × hourly rate) per owner; hours over 40
+  still reported; overtime multiplier configurable (migration 002).
 - Not deployed; dedicated repo pending (see §4/§12). Not approved for real employee use yet.
 
 ## Continuing in Claude Code Desktop or ChatGPT

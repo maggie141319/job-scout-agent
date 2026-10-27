@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { currentAdmin } from "@/lib/auth";
 import { centsToDecimal, toCsv } from "@/lib/csv";
 import { getPool } from "@/lib/db";
+import { PAY_ESTIMATE_DISCLAIMER, payEstimateLabel } from "@/lib/settlement";
 import { weeklySettlement } from "@/lib/services/reports";
 import { chicagoDate, formatDateTime, isYmd, payWeek, toChicagoLocalInput } from "@/lib/time";
 
@@ -21,20 +22,23 @@ export async function GET(req: NextRequest) {
 
   if (kind === "summary") {
     csv = toCsv(
-      ["Employee Code", "Last Name", "First Name", "Week Start (Fri)", "Week End (Thu)", "Pay Date", "Total Hours", "Hours Up To 40", "Hours Over 40", "Hourly Rate", "Straight-Time Pay", "OT Premium (0.5x, over 40)", "Amount Due", "OT Premium Included", "Pending Exceptions", "Review Flags"],
+      ["Employee Code", "Last Name", "First Name", "Week Start (Fri)", "Week End (Thu)", "Pay Date", "Total Hours", "Hours Up To 40", "Hours Over 40", "Hourly Rate", "Total Hours x Rate", `Over-40 Premium at ${report.overtimeMultiplier}x (reference)`, "Over-40 Premium Included", "Estimated Amount (internal estimate)", "Estimate Method", "Estimate Notice", "Pending Exceptions", "Review Flags"],
       report.rows.map((r) => [
         r.employeeCode, r.lastName, r.firstName, w.startDate, w.endDate, w.payDate,
         r.totalHours.toFixed(2), r.regularHours.toFixed(2), r.overtimeHours.toFixed(2),
         r.currentRateCents === null ? "" : centsToDecimal(r.currentRateCents),
-        centsToDecimal(r.straightPayCents), centsToDecimal(r.overtimePremiumCents), centsToDecimal(r.amountDueCents),
-        report.overtimePolicy === "apply" ? "Yes" : "No (report only)",
+        centsToDecimal(r.straightPayCents), centsToDecimal(r.overtimePremiumCents),
+        report.payEstimateMethod === "overtime_premium" ? "Yes" : "No",
+        centsToDecimal(r.estimatedAmountCents),
+        payEstimateLabel(report.payEstimateMethod, report.overtimeMultiplier),
+        PAY_ESTIMATE_DISCLAIMER,
         r.pendingExceptions,
         [...new Set(r.flags.map((f) => f.code))].join(" "),
       ]),
     );
   } else if (kind === "daily") {
     csv = toCsv(
-      ["Employee Code", "Last Name", "First Name", "Date", "Day", "Hours", "Hourly Rate", "Amount", "Week Start", "Pay Date"],
+      ["Employee Code", "Last Name", "First Name", "Date", "Day", "Hours", "Hourly Rate", "Hours x Rate (internal estimate)", "Week Start", "Pay Date"],
       report.rows.flatMap((r) =>
         r.days.filter((d) => d.seconds > 0).map((d) => [
           r.employeeCode, r.lastName, r.firstName, d.date, DOW[new Date(`${d.date}T12:00:00Z`).getUTCDay()],

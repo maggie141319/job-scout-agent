@@ -3,7 +3,7 @@ import { ActionForm } from "@/components/action-form";
 import { requireAdmin } from "@/lib/auth";
 import { getPool } from "@/lib/db";
 import { PUNCH_LABELS, PUNCH_TYPES } from "@/lib/punch-rules";
-import { formatCents } from "@/lib/settlement";
+import { formatCents, PAY_ESTIMATE_DISCLAIMER } from "@/lib/settlement";
 import { getEmployee, isUuid, listEmployees } from "@/lib/services/employees";
 import { employeeTimecard } from "@/lib/services/reports";
 import { addDays, chicagoDate, formatDateTime, formatTime, formatYmd, hoursFromSeconds, isYmd, toChicagoLocalInput, weekStartFor } from "@/lib/time";
@@ -77,7 +77,7 @@ export default async function TimecardsPage({ searchParams }: { searchParams: Pr
                     {tc.settlement.days.map((d) => (
                       <td key={d.date} className="tabular-nums text-slate-600">{formatCents(d.amountCents)}</td>
                     ))}
-                    <td className="font-semibold tabular-nums">{formatCents(tc.settlement.amountDueCents)}</td>
+                    <td className="font-semibold tabular-nums">{formatCents(tc.settlement.estimatedAmountCents)}</td>
                   </tr>
                 )}
               </tbody>
@@ -85,6 +85,7 @@ export default async function TimecardsPage({ searchParams }: { searchParams: Pr
             {tc.settlement.overtimeHours > 0 && (
               <p className="mt-2 text-sm text-amber-800">Over 40 hours this week: {tc.settlement.overtimeHours.toFixed(2)} h.</p>
             )}
+            {isAdmin && <p className="mt-2 text-xs text-slate-500">Dollar amounts: {PAY_ESTIMATE_DISCLAIMER}</p>}
             {tc.settlement.flags.length > 0 && (
               <ul className="mt-3 space-y-1 text-sm text-rose-800">
                 {tc.settlement.flags.map((f, i) => (

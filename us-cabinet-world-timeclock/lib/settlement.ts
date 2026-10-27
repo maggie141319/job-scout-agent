@@ -8,11 +8,25 @@
  * - Time is attributed to the Chicago calendar day and pay week in which it was actually
  *   worked, so overnight shifts are split at midnight and at the Friday 00:00 week boundary.
  * - Open shifts (no clock-out) only count their completed segments and are flagged for review.
- * - Overtime (hours over 40 in the Friday–Thursday week) is always reported. Whether the
- *   0.5× premium is added to the amount due is a setting so the accountant can decide.
+ * - Hours over 40 in the Friday–Thursday week are always tracked and reported separately.
+ * - The estimated amount is an INTERNAL PAYMENT ESTIMATE, not a determination of legal payroll
+ *   obligations. Default method "flat_rate": total hours × each day's hourly rate (hours over 40
+ *   are paid at the regular rate). Method "overtime_premium" adds (multiplier − 1) × regular rate
+ *   for hours over 40. The premium at the configured multiplier is always computed for reference.
  */
 import { addDays, chicagoMidnight, hoursFromSeconds, type PayWeek } from "./time";
 import type { PunchType } from "./punch-rules";
+
+export type PayEstimateMethod = "flat_rate" | "overtime_premium";
+
+export const PAY_ESTIMATE_DISCLAIMER =
+  "Internal payment estimate only. Not a determination of legal payroll obligations (worker classification, overtime and other requirements must be confirmed with your accountant).";
+
+export function payEstimateLabel(method: PayEstimateMethod, multiplier: number): string {
+  return method === "flat_rate"
+    ? "Flat rate: total hours × hourly rate (hours over 40 at the regular rate)"
+    : `Overtime premium: hours over 40 at ${multiplier}× the regular rate`;
+}
 
 export interface SettlementPunch {
   id: string;
@@ -33,7 +47,9 @@ export interface SettlementOptions {
   week: PayWeek;
   now: Date;
   maxShiftHours: number;
-  overtimePolicy: "apply" | "report_only";
+  payEstimateMethod: PayEstimateMethod;
+  /** e.g. 1.5 for time-and-a-half; only added to the estimate when payEstimateMethod is "overtime_premium". */
+  overtimeMultiplier: number;
   overtimeThresholdHours?: number;
   longShiftHours?: number;
 }
@@ -83,8 +99,10 @@ export interface EmployeeSettlement {
   regularHours: number;
   overtimeHours: number;
   straightPayCents: number;
+  /** Extra cost of hours over 40 at the configured multiplier (reference; included only for "overtime_premium"). */
   overtimePremiumCents: number;
-  amountDueCents: number;
+  /** Internal payment estimate (see PAY_ESTIMATE_DISCLAIMER). */
+  estimatedAmountCents: number;
   pendingExceptions: number;
 }
 
@@ -268,7 +286,8 @@ export function calculateEmployeeWeek(
   const straightPayCents = days.reduce((s, d) => s + d.amountCents, 0);
   const overtimeSeconds = Math.max(0, totalSeconds - thresholdSeconds);
   // Regular rate = straight-time pay / total hours (weighted when rates differ during the week).
-  const overtimePremiumCents = totalSeconds > 0 ? Math.round((0.5 * straightPayCents * overtimeSeconds) / totalSeconds) : 0;
+  const premiumFactor = Math.max(0, opts.overtimeMultiplier - 1);
+  const overtimePremiumCents = totalSeconds > 0 ? Math.round((premiumFactor * straightPayCents * overtimeSeconds) / totalSeconds) : 0;
   flags.sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0));
 
   return {
@@ -281,7 +300,7 @@ export function calculateEmployeeWeek(
     overtimeHours: hoursFromSeconds(overtimeSeconds),
     straightPayCents,
     overtimePremiumCents,
-    amountDueCents: straightPayCents + (opts.overtimePolicy === "apply" ? overtimePremiumCents : 0),
+    estimatedAmountCents: straightPayCents + (opts.payEstimateMethod === "overtime_premium" ? overtimePremiumCents : 0),
     pendingExceptions,
   };
 }

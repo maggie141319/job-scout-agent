@@ -134,8 +134,8 @@ try {
 
   // Shorten the duplicate window so the rest of the day can be punched quickly.
   await admin.goto(`${BASE}/admin/settings`);
-  await formWith(admin, "Save location settings").locator('[name="duplicate_window_s"]').fill("0");
-  await submitForm(admin, "Save location settings", "Settings saved");
+  await formWith(admin, "Save settings").locator('[name="duplicate_window_s"]').fill("0");
+  await submitForm(admin, "Save settings", "Settings saved");
   log("admin updates settings (duplicate window → 0 s for the test)");
 
   for (const [action, expected] of [
@@ -231,17 +231,22 @@ try {
 
   await admin.goto(`${BASE}/admin/settlement`);
   await admin.getByRole("link", { name: "Lopez, Maria" }).waitFor();
+  await admin.getByText("Internal payment estimate only.").first().waitFor();
+  await admin.getByText(/Flat rate: total hours × hourly rate/).first().waitFor();
   await shot(admin, "15-admin-settlement");
   const csv = await admin.request.get(`${BASE}/admin/export?kind=summary`);
   const csvText = await csv.text();
   if (!csvText.includes("Lopez") || !csvText.startsWith("Employee Code")) fail("summary CSV missing data");
+  if (!csvText.includes("Estimated Amount (internal estimate)") || !csvText.includes("Hours Over 40") || !csvText.includes("Internal payment estimate only")) {
+    fail("summary CSV must label the internal estimate and keep hours over 40");
+  }
   const qb = await (await admin.request.get(`${BASE}/admin/export?kind=quickbooks`)).text();
   if (!qb.startsWith("Date,Employee,Hours")) fail("QuickBooks CSV header wrong");
   const anon = await phone.request.get(`${BASE}/admin/export?kind=summary`);
   if (anon.status() !== 403) fail("CSV export must require admin");
   const mgrCsv = await mgr.request.get(`${BASE}/admin/export?kind=summary`);
   if (mgrCsv.status() !== 403) fail("CSV export must be admin-only (manager got access)");
-  log("settlement report + CSV exports (admin only)");
+  log("settlement shows flat-rate internal estimate label; CSV exports (admin only) keep hours over 40");
 
   await admin.goto(`${BASE}/admin/audit`);
   for (const action of ["punch.replace", "punch.exception_approve", "kiosk.register", "settings.geofence_mode", "employee.create"]) {

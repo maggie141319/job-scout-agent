@@ -130,7 +130,8 @@ describe("weekly settlement", () => {
     week: payWeek(weekDate),
     now,
     maxShiftHours: 16,
-    overtimePolicy: "apply" as const,
+    payEstimateMethod: "flat_rate" as const,
+    overtimeMultiplier: 1.5,
   });
 
   it("subtracts the actual lunch, not a fixed deduction", () => {
@@ -174,21 +175,42 @@ describe("weekly settlement", () => {
     expect(r.days.find((d) => d.date === "2026-11-01")?.hours).toBe(7);
   });
 
-  it("reports overtime over 40 hours and applies the premium only when the policy says so", () => {
+  const fortyFive = () => {
     const punches: SettlementPunch[] = [];
     for (const d of ["2026-10-23", "2026-10-24", "2026-10-26", "2026-10-27", "2026-10-28"]) {
       punches.push(p("clock_in", ct(d, 7, 0)), p("clock_out", ct(d, 16, 0)));
     }
-    const applied = calculateEmployeeWeek(punches, rate20, opts("2026-10-23"));
-    expect(applied.totalHours).toBe(45);
-    expect(applied.regularHours).toBe(40);
-    expect(applied.overtimeHours).toBe(5);
-    expect(applied.straightPayCents).toBe(90000);
-    expect(applied.overtimePremiumCents).toBe(5000);
-    expect(applied.amountDueCents).toBe(95000);
-    const reportOnly = calculateEmployeeWeek(punches, rate20, { ...opts("2026-10-23"), overtimePolicy: "report_only" });
-    expect(reportOnly.overtimePremiumCents).toBe(5000);
-    expect(reportOnly.amountDueCents).toBe(90000);
+    return punches;
+  };
+
+  it("flat-rate estimate: all hours (including over 40) × regular rate, over-40 hours still reported", () => {
+    const flat = calculateEmployeeWeek(fortyFive(), rate20, opts("2026-10-23"));
+    expect(flat.totalHours).toBe(45);
+    expect(flat.regularHours).toBe(40);
+    expect(flat.overtimeHours).toBe(5);
+    expect(flat.straightPayCents).toBe(90000);
+    expect(flat.estimatedAmountCents).toBe(90000); // 45 h × $20
+    expect(flat.overtimePremiumCents).toBe(5000); // reference only: 5 h × $20 × 0.5
+  });
+
+  it("keeps the overtime multiplier configurable for future use", () => {
+    const premium = calculateEmployeeWeek(fortyFive(), rate20, { ...opts("2026-10-23"), payEstimateMethod: "overtime_premium" });
+    expect(premium.overtimePremiumCents).toBe(5000);
+    expect(premium.estimatedAmountCents).toBe(95000);
+    const double = calculateEmployeeWeek(fortyFive(), rate20, { ...opts("2026-10-23"), payEstimateMethod: "overtime_premium", overtimeMultiplier: 2 });
+    expect(double.overtimePremiumCents).toBe(10000);
+    expect(double.estimatedAmountCents).toBe(100000);
+    const flatAt2 = calculateEmployeeWeek(fortyFive(), rate20, { ...opts("2026-10-23"), overtimeMultiplier: 2 });
+    expect(flatAt2.overtimePremiumCents).toBe(10000);
+    expect(flatAt2.estimatedAmountCents).toBe(90000); // multiplier never changes the flat-rate estimate
+  });
+
+  it("has no over-40 hours or premium for a normal week", () => {
+    const r = calculateEmployeeWeek(fortyFive().slice(0, 8), rate20, { ...opts("2026-10-23"), payEstimateMethod: "overtime_premium" });
+    expect(r.totalHours).toBe(36);
+    expect(r.overtimeHours).toBe(0);
+    expect(r.overtimePremiumCents).toBe(0);
+    expect(r.estimatedAmountCents).toBe(72000);
   });
 
   it("uses the rate in effect on each worked day", () => {

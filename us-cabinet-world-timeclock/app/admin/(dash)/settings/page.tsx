@@ -5,6 +5,7 @@ import { getPool } from "@/lib/db";
 import { listAdminUsers } from "@/lib/services/admin-auth";
 import { listKiosks } from "@/lib/services/devices";
 import { getSettings } from "@/lib/services/settings";
+import { PAY_ESTIMATE_DISCLAIMER } from "@/lib/settlement";
 import { formatDateTime } from "@/lib/time";
 import {
   changeOwnPasswordAction,
@@ -29,7 +30,7 @@ export default async function SettingsPage() {
       <h1 className="text-xl font-bold">Settings</h1>
 
       <section className="card space-y-4">
-        <h2 className="text-lg font-semibold">Warehouse location &amp; geofence</h2>
+        <h2 className="text-lg font-semibold">Warehouse location, geofence &amp; payment estimate</h2>
         <p className="text-sm">{s.site_name} · {s.address}</p>
         <div className={`rounded-lg p-3 text-sm ${s.geofence_mode === "enforce" ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-amber-900"}`}>
           Mode: <strong>{s.geofence_mode === "enforce" ? "ENFORCE" : "MONITOR"}</strong> ·{" "}
@@ -44,7 +45,7 @@ export default async function SettingsPage() {
           <a className="text-sky-700 underline" href={mapUrl} target="_blank" rel="noreferrer">Open in map</a>
         </p>
 
-        <ActionForm action={updateSettingsAction} submitLabel="Save location settings" className="space-y-3">
+        <ActionForm action={updateSettingsAction} submitLabel="Save settings" className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-4">
             <div><label className="label" htmlFor="lat">Latitude</label><input id="lat" name="latitude" defaultValue={s.latitude} required className="input" /></div>
             <div><label className="label" htmlFor="lng">Longitude</label><input id="lng" name="longitude" defaultValue={s.longitude} required className="input" /></div>
@@ -53,14 +54,22 @@ export default async function SettingsPage() {
             <div><label className="label">Max reading age (s)</label><input name="max_location_age_s" type="number" min={10} max={900} defaultValue={s.max_location_age_s} className="input" /></div>
             <div><label className="label">Duplicate-punch window (s)</label><input name="duplicate_window_s" type="number" min={0} max={600} defaultValue={s.duplicate_window_s} className="input" /></div>
             <div><label className="label">Max shift length (h)</label><input name="max_shift_hours" type="number" min={8} max={24} defaultValue={s.max_shift_hours} className="input" /></div>
-            <div>
-              <label className="label">Overtime premium (&gt;40 h/week)</label>
-              <select name="overtime_policy" defaultValue={s.overtime_policy} className="input">
-                <option value="apply">Include 0.5× premium in amount due</option>
-                <option value="report_only">Report only (accountant decides)</option>
+            <div className="sm:col-span-2">
+              <label className="label">Payment estimate method (internal)</label>
+              <select name="pay_estimate_method" defaultValue={s.pay_estimate_method} className="input">
+                <option value="flat_rate">Flat rate: all hours × hourly rate (current practice)</option>
+                <option value="overtime_premium">Add overtime premium for hours over 40</option>
               </select>
             </div>
+            <div>
+              <label className="label">Overtime multiplier</label>
+              <input name="overtime_multiplier" type="number" min={1} max={3} step={0.01} defaultValue={s.overtime_multiplier} className="input" />
+            </div>
           </div>
+          <p className="text-xs text-slate-500">
+            Hours over 40 per Friday–Thursday week are always tracked and reported. The multiplier is used for the reference premium
+            column and is added to the estimate only when &quot;Add overtime premium&quot; is selected. {PAY_ESTIMATE_DISCLAIMER}
+          </p>
           <LocateButton latId="lat" lngId="lng" />
           <p className="text-xs text-slate-500">Changing the coordinates clears verification and returns to monitor mode.</p>
         </ActionForm>

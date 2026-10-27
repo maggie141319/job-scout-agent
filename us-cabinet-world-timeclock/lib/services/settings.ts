@@ -1,6 +1,7 @@
 import "server-only";
 import type { Queryable } from "../db";
 import { AppError } from "../errors";
+import type { PayEstimateMethod } from "../settlement";
 import { writeAudit, type Actor } from "./audit";
 
 export interface SiteSettings {
@@ -16,14 +17,18 @@ export interface SiteSettings {
   max_location_age_s: number;
   duplicate_window_s: number;
   max_shift_hours: number;
-  overtime_policy: "apply" | "report_only";
+  pay_estimate_method: PayEstimateMethod;
+  overtime_multiplier: number;
   updated_at: Date;
 }
+
+// pg returns NUMERIC columns as strings.
+const normalize = (row: SiteSettings): SiteSettings => ({ ...row, overtime_multiplier: Number(row.overtime_multiplier) });
 
 export async function getSettings(db: Queryable): Promise<SiteSettings> {
   const res = await db.query<SiteSettings>(`select * from site_settings where id = 1`);
   if (!res.rows[0]) throw new Error("site_settings row missing; run migrations");
-  return res.rows[0];
+  return normalize(res.rows[0]);
 }
 
 export interface SettingsUpdate {
@@ -34,7 +39,8 @@ export interface SettingsUpdate {
   max_location_age_s: number;
   duplicate_window_s: number;
   max_shift_hours: number;
-  overtime_policy: "apply" | "report_only";
+  pay_estimate_method: PayEstimateMethod;
+  overtime_multiplier: number;
 }
 
 function intInRange(name: string, v: number, min: number, max: number) {
@@ -53,13 +59,17 @@ export async function updateSettings(db: Queryable, update: SettingsUpdate, acto
   intInRange("Max location age (s)", update.max_location_age_s, 10, 900);
   intInRange("Duplicate window (s)", update.duplicate_window_s, 0, 600);
   intInRange("Max shift hours", update.max_shift_hours, 8, 24);
-  if (!["apply", "report_only"].includes(update.overtime_policy)) throw new AppError("INVALID_INPUT", "Invalid overtime policy.");
+  if (!["flat_rate", "overtime_premium"].includes(update.pay_estimate_method)) throw new AppError("INVALID_INPUT", "Invalid payment estimate method.");
+  if (!Number.isFinite(update.overtime_multiplier) || update.overtime_multiplier < 1 || update.overtime_multiplier > 3 || Math.round(update.overtime_multiplier * 100) !== update.overtime_multiplier * 100) {
+    throw new AppError("INVALID_INPUT", "Overtime multiplier must be between 1.00 and 3.00 (e.g. 1.5).");
+  }
 
   const before = await getSettings(db);
   const moved = before.latitude !== update.latitude || before.longitude !== update.longitude;
   const res = await db.query<SiteSettings>(
     `update site_settings set latitude = $1, longitude = $2, radius_m = $3, max_accuracy_m = $4,
-       max_location_age_s = $5, duplicate_window_s = $6, max_shift_hours = $7, overtime_policy = $8,
+       max_location_age_s = $5, duplicate_window_s = $6, max_shift_hours = $7, pay_estimate_method = $8,
+       overtime_multiplier = $11,
        coordinates_verified_at = case when $9 then null else coordinates_verified_at end,
        coordinates_verified_by = case when $9 then null else coordinates_verified_by end,
        geofence_mode = case when $9 then 'monitor' else geofence_mode end,
@@ -73,13 +83,15 @@ export async function updateSettings(db: Queryable, update: SettingsUpdate, acto
       update.max_location_age_s,
       update.duplicate_window_s,
       update.max_shift_hours,
-      update.overtime_policy,
+      update.pay_estimate_method,
       moved,
       actor.id,
+      update.overtime_multiplier,
     ],
   );
-  await writeAudit(db, actor, "settings.update", "site_settings", "1", { before, after: res.rows[0] });
-  return res.rows[0];
+  const after = normalize(res.rows[0]);
+  await writeAudit(db, actor, "settings.update", "site_settings", "1", { before, after });
+  return after;
 }
 
 /** Records that an administrator confirmed the warehouse coordinates (e.g. on site). */

@@ -7,6 +7,9 @@ Mobile-friendly time clock for US Cabinet World (2341 S Council Rd, Oklahoma Cit
 - Server-generated timestamps, America/Chicago calendar, actual lunch times (no automatic deduction).
 - GPS geofence (default 100 m) with a manager-review exception path when GPS fails.
 - Weekly settlement for the **Friday–Thursday** pay week (paid Friday), CSV exports for bookkeeping/QuickBooks.
+  The dollar figure is an **internal payment estimate** (default: total hours × hourly rate, including hours over 40),
+  not a determination of legal payroll obligations. Hours over 40 are always reported separately; an overtime
+  multiplier is configurable for future use.
 - Admin dashboard with roles, punch corrections and a complete, append-only audit trail.
 
 Stack: Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · PostgreSQL (`pg`) · Vitest · Playwright smoke test.
@@ -59,7 +62,7 @@ npm run build
 Covered: clock-in, lunch-out, lunch-in, clock-out, invalid sequences, duplicate-punch window, idempotent retries,
 PIN hashing/rate limiting, GPS required / outside / low accuracy / stale rejection, monitor vs enforce mode,
 manager exception approve/reject, kiosk mode and revocation, overnight shifts, Friday week boundary, DST,
-overtime reporting, rate history, corrections with audit trail, DB-level immutability of raw punches and audit log,
+hours-over-40 reporting, flat-rate estimate and configurable overtime multiplier, upgrade migration safety, rate history, corrections with audit trail, DB-level immutability of raw punches and audit log,
 admin login lockout and sessions.
 
 Browser end-to-end smoke test (real Chromium, simulated GPS) against a running production build:
@@ -101,7 +104,9 @@ Re-run `npm run db:migrate` against each database whenever a new file appears in
 - [ ] Enable enforcement; confirm an off-site punch is rejected and the exception request reaches the Review page.
 - [ ] Register the warehouse tablet as a kiosk (optional) and test a punch.
 - [ ] Review a full test week on the Settlement page; export CSVs and confirm the format with your bookkeeper/accountant.
-- [ ] Confirm overtime policy and worker classification with your accountant (Settings → Overtime premium).
+- [ ] Confirm with your accountant that the flat-rate internal estimate is appropriate for your workers (classification,
+      overtime obligations). 1099 classification does not automatically remove overtime or other legal requirements.
+      If overtime pay applies, set Settings → Payment estimate method → "Add overtime premium" (multiplier configurable).
 - [ ] Set up backups (below).
 
 ## 6. Backups and recovery
@@ -120,6 +125,8 @@ Re-run `npm run db:migrate` against each database whenever a new file appears in
   If location fails: **Try again** or **send to a manager for review** with a short reason (time is recorded immediately).
 - Managers/admins: `/admin`. Fix missing punches on **Timecards** (every change requires a reason and is audited; originals are kept).
 - Pay: **Settlement** → choose the week → resolve flags → export CSV → optionally "Save snapshot" after paying.
+  "Est. amount (internal)" = total hours × hourly rate by default; "Over 40 h" and the reference "OT premium" column
+  stay visible so the accountant can review.
 
 ## Project layout
 

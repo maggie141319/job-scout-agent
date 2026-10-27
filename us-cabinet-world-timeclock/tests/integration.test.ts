@@ -72,7 +72,7 @@ const punch = (pin: string, action: string, at: Date, extra: Record<string, unkn
 
 async function enforce() {
   await transaction(async (db) => {
-    await updateSettings(db, { ...SITE, radius_m: 100, max_accuracy_m: 100, max_location_age_s: 120, duplicate_window_s: 60, max_shift_hours: 16, overtime_policy: "apply" }, adminActor);
+    await updateSettings(db, { ...SITE, radius_m: 100, max_accuracy_m: 100, max_location_age_s: 120, duplicate_window_s: 60, max_shift_hours: 16, pay_estimate_method: "flat_rate", overtime_multiplier: 1.5 }, adminActor);
     await verifyCoordinates(db, adminActor, "Measured on site at the front door");
     await setGeofenceMode(db, "enforce", adminActor);
   });
@@ -235,9 +235,9 @@ describe.skipIf(!TEST_DB)("time clock workflow (PostgreSQL)", () => {
     const r2 = wk2.rows.find((r) => r.employeeId === employee.id)!;
     expect(wk1.week).toMatchObject({ startDate: "2026-10-23", endDate: "2026-10-29", payDate: "2026-10-30" });
     expect(r1.totalHours).toBe(2);
-    expect(r1.amountDueCents).toBe(3600);
+    expect(r1.estimatedAmountCents).toBe(3600);
     expect(r2.totalHours).toBe(6.5);
-    expect(r2.amountDueCents).toBe(11700);
+    expect(r2.estimatedAmountCents).toBe(11700);
     expect(r1.flags).toEqual([]);
   });
 
@@ -285,10 +285,69 @@ describe.skipIf(!TEST_DB)("time clock workflow (PostgreSQL)", () => {
     await punch("158340", "clock_out", ct("2026-11-06", 16, 0));
     await transaction((db) => setRate(db, employee.id, "17.50", "2026-11-13", adminActor));
     const report = await weeklySettlement(getPool(), "2026-11-06", ct("2026-11-20", 9, 0));
-    expect(report.rows.find((r) => r.employeeId === employee.id)?.amountDueCents).toBe(12000);
+    expect(report.rows.find((r) => r.employeeId === employee.id)?.estimatedAmountCents).toBe(12000);
     const snapId = await transaction((db) => finalizeWeek(db, "2026-11-06", "Paid 11/13", adminActor, ct("2026-11-20", 9, 0)));
     const snap = await query<{ data: { rows: unknown[] } }>("select data from settlement_snapshots where id = $1", [snapId]);
     expect(snap[0].data.rows.length).toBeGreaterThan(0);
+  });
+
+  it("upgrades an existing database to the flat-rate estimate without touching punches or audit history", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const pg = (await import("pg")).default;
+    const client = new pg.Client({ connectionString: TEST_DB });
+    await client.connect();
+    try {
+      await client.query("drop schema if exists upgrade_test cascade; create schema upgrade_test; set search_path to upgrade_test;");
+      await client.query(await readFile("db/migrations/001_initial.sql", "utf8"));
+      const emp = await client.query(`insert into employees (employee_code, first_name, last_name, pin_lookup) values ('U1','Up','Grade','x') returning id`);
+      await client.query(`insert into punches (employee_id, punch_type, punched_at, source) values ($1, 'clock_in', '2026-10-23T13:00:00Z', 'phone')`, [emp.rows[0].id]);
+      await client.query(`insert into audit_log (actor_type, action, entity_type) values ('system', 'pre.existing', 'test')`);
+      const punchesBefore = (await client.query("select * from punches")).rows;
+      const auditBefore = (await client.query("select id, action from audit_log order by id")).rows;
+      expect((await client.query("select overtime_policy from site_settings")).rows[0].overtime_policy).toBe("apply");
+
+      await client.query(await readFile("db/migrations/002_flat_rate_estimate.sql", "utf8"));
+
+      const settings = (await client.query("select pay_estimate_method, overtime_multiplier from site_settings")).rows[0];
+      expect(settings).toEqual({ pay_estimate_method: "flat_rate", overtime_multiplier: "1.50" });
+      expect((await client.query("select * from punches")).rows).toEqual(punchesBefore);
+      const auditAfter = (await client.query("select id, action, before, after from audit_log order by id")).rows;
+      expect(auditAfter.slice(0, auditBefore.length).map((a) => ({ id: a.id, action: a.action }))).toEqual(auditBefore);
+      expect(auditAfter.at(-1)).toMatchObject({ action: "settings.pay_estimate_method", before: { overtime_policy: "apply" }, after: { pay_estimate_method: "flat_rate" } });
+      await expect(client.query("update site_settings set overtime_multiplier = 0.5")).rejects.toThrow(/check/);
+      await expect(client.query("update site_settings set pay_estimate_method = 'apply'")).rejects.toThrow(/check/);
+    } finally {
+      await client.query("drop schema if exists upgrade_test cascade");
+      await client.end();
+    }
+  });
+
+  it("estimates a 45-hour week at the flat rate while reporting 5 hours over 40", async () => {
+    const { employee } = await newEmployee("E997", "640281", "20.00");
+    for (const d of ["2026-11-13", "2026-11-14", "2026-11-16", "2026-11-17", "2026-11-18"]) {
+      await punch("640281", "clock_in", ct(d, 7, 0));
+      await punch("640281", "lunch_out", ct(d, 11, 0));
+      await punch("640281", "lunch_in", ct(d, 11, 30));
+      await punch("640281", "clock_out", ct(d, 16, 30)); // 9 h worked per day after a 30-minute lunch
+    }
+    const now = ct("2026-11-25", 9, 0);
+    const settings = await getSettings(getPool());
+    expect(settings.pay_estimate_method).toBe("flat_rate");
+    expect(settings.overtime_multiplier).toBe(1.5);
+    const flat = (await weeklySettlement(getPool(), "2026-11-13", now)).rows.find((r) => r.employeeId === employee.id)!;
+    expect(flat.totalHours).toBe(45);
+    expect(flat.overtimeHours).toBe(5);
+    expect(flat.estimatedAmountCents).toBe(90000);
+    expect(flat.overtimePremiumCents).toBe(5000);
+
+    const base = { ...SITE, radius_m: 100, max_accuracy_m: 100, max_location_age_s: 120, duplicate_window_s: 60, max_shift_hours: 16 };
+    await expectCode(transaction((db) => updateSettings(db, { ...base, pay_estimate_method: "flat_rate", overtime_multiplier: 0.5 }, adminActor)), "INVALID_INPUT");
+    await transaction((db) => updateSettings(db, { ...base, pay_estimate_method: "overtime_premium", overtime_multiplier: 1.5 }, adminActor));
+    const premium = (await weeklySettlement(getPool(), "2026-11-13", now)).rows.find((r) => r.employeeId === employee.id)!;
+    expect(premium.estimatedAmountCents).toBe(95000);
+    const audit = await query<{ after: { pay_estimate_method: string } }>("select after from audit_log where action = 'settings.update' order by id desc limit 1");
+    expect(audit[0].after.pay_estimate_method).toBe("overtime_premium");
+    await transaction((db) => updateSettings(db, { ...base, pay_estimate_method: "flat_rate", overtime_multiplier: 1.5 }, adminActor));
   });
 
   it("resets PINs without exposing the old one", async () => {
